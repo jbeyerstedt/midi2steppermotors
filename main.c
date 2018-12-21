@@ -37,8 +37,8 @@ uint32_t g_ui32SysClock;  // System clock rate in Hz.
 /* VARIABLES AND DATA TYPES FOR VALVE POSITION CONTROL */
 
 // mapping of stepOutput and dirOutput array's index to a speaking name
-typedef enum StepPorts { StepPortE = 0, StepPortN } stepPort_t;
-typedef enum DirPorts { DirPortL = 0, DirPortN } dirPort_t;
+typedef enum StepPorts { StepPortE = 0 } stepPort_t;
+typedef enum DirPorts { DirPortL = 0 } dirPort_t;
 #define PORTS_CNT 2
 #define VALVE_CNT 6
 
@@ -103,18 +103,17 @@ void Timer0IntHandler(void) {
 
   // write stepper motor step output
   GPIO_PORTE_AHB_DATA_R = GPIO_PORTE_AHB_DATA_R ^ stepToggle[0];
-  //GPIO_PORTN_DATA_R     = GPIO_PORTN_DATA_R ^ stepToggle[1];
+  // TODO: add more ports, if they are used
 
   // debug output: blink LED same as stepper motor 1
   GPIO_PORTN_DATA_R = GPIO_PORTN_DATA_R ^ stepToggle[valveLUT[0].stepPort];
 
-  // Update the interrupt status.
-  ROM_IntMasterDisable();
-  ROM_IntMasterEnable();
-
   // increase step time
   currentStepTime++;
 }
+
+void    updateValve(uint8_t valveIdx, uint8_t position);
+uint8_t velocityToPosition(uint8_t midiVelocity);
 
 /**
  * main.c
@@ -148,13 +147,13 @@ int main(void) {
   ROM_TimerEnable(TIMER0_BASE, TIMER_A);
 
   /* SETUP UART0 (connected to debug interface, 115200 baud) */
-  SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
-  SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
-  GPIOPinConfigure(GPIO_PA0_U0RX);
-  GPIOPinConfigure(GPIO_PA1_U0TX);
-  GPIOPinTypeUART(GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1);
-  UARTConfigSetExpClk(UART0_BASE, g_ui32SysClock, 115200,
-                      (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE));
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+  ROM_GPIOPinConfigure(GPIO_PA0_U0RX);
+  ROM_GPIOPinConfigure(GPIO_PA1_U0TX);
+  ROM_GPIOPinTypeUART(GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+  ROM_UARTConfigSetExpClk(UART0_BASE, g_ui32SysClock, 115200,
+                          (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE));
 
   /* SETUP GPIO OUTPUTS FOR STEPPER DRIVERS */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
@@ -176,12 +175,12 @@ int main(void) {
     // TODO: use state machine, start if (incoming byte > 0x7F)
 
     /* get MIDI input */
-    midiCmd  = UARTCharGet(UART0_BASE);
-    midiNote = UARTCharGet(UART0_BASE);
-    midiVel  = UARTCharGet(UART0_BASE);
+    midiCmd  = ROM_UARTCharGet(UART0_BASE);
+    midiNote = ROM_UARTCharGet(UART0_BASE);
+    midiVel  = ROM_UARTCharGet(UART0_BASE);
     SysCtlDelay(g_ui32SysClock / (1 * 3));  // delay 1us to get newline char, if it was sent
-    if (UARTCharsAvail(UART0_BASE)) {       // catch additional newline, when sent via bash with echo
-      if (UARTCharGet(UART0_BASE) != 0x0A) {
+    if (ROM_UARTCharsAvail(UART0_BASE)) {   // catch additional newline, when sent via bash with echo
+      if (ROM_UARTCharGet(UART0_BASE) != 0x0A) {
         printf("error receiving\n");
       }
     }
@@ -192,40 +191,7 @@ int main(void) {
       switch (midiNote) {
       case 0x3C:
         printf("middle C!\n");
-        uint8_t valveLUTidx = 0;
-
-        // TODO: convert velocity to position value (linear mapping)
-
-        // calculate position difference
-        int16_t positionOffset = (int16_t)midiVel - (int16_t)valveLUT[valveLUTidx].position;
-
-        // set stepping direction
-        if (positionOffset < 0) {  // set dir to 0 (delete the bit)
-          dirOutput[valveLUT[valveLUTidx].dirPort] =
-              dirOutput[valveLUT[valveLUTidx].dirPort] & ~(valveLUT[valveLUTidx].dirPin);
-          valveLUT[valveLUTidx].stepEndTime = (uint8_t)(-positionOffset);
-        } else {  // set dir to 1
-          dirOutput[valveLUT[valveLUTidx].dirPort] =
-              dirOutput[valveLUT[valveLUTidx].dirPort] | valveLUT[valveLUTidx].dirPin;
-          valveLUT[valveLUTidx].stepEndTime = (uint8_t)positionOffset;
-        }
-
-        // activate stepping output
-        //ROM_IntMasterDisable();
-        valveLUT[valveLUTidx].stepEndTime += currentStepTime;  // TODO: is this sufficient with fast notes?
-        stepToggle[valveLUT[valveLUTidx].dirPort] =
-            stepToggle[valveLUT[valveLUTidx].dirPort] | valveLUT[valveLUTidx].dirPin;
-
-        switch (valveLUT[valveLUTidx].dirPort) {
-        case DirPortL:  // only change bit 0:5 (protect others with 0xC0)
-          GPIO_PORTL_DATA_R = (GPIO_PORTL_DATA_R & 0xC0) | dirOutput[DirPortL];
-          break;
-        }
-        //ROM_IntMasterEnable();
-
-        // update position
-        valveLUT[0].position += positionOffset;
-
+        updateValve(0, velocityToPosition(midiVel));
         break;
       default:
         printf("other note 0x%02x\n", midiNote);
@@ -234,6 +200,50 @@ int main(void) {
   }
 
   return 0;
+}
+
+/**
+ * everything to update/ move a valve to the given position
+ * uses global valveLUT
+ */
+void updateValve(uint8_t valveIdx, uint8_t position) {
+  // calculate position difference
+  int16_t positionOffset = (int16_t)position - (int16_t)valveLUT[valveIdx].position;
+
+  // set stepping direction
+  if (positionOffset < 0) {  // set dir to 0 (delete the bit)
+    dirOutput[valveLUT[valveIdx].dirPort] =
+        dirOutput[valveLUT[valveIdx].dirPort] & ~(valveLUT[valveIdx].dirPin);
+    valveLUT[valveIdx].stepEndTime = (uint8_t)(-positionOffset);
+  } else {  // set dir to 1
+    dirOutput[valveLUT[valveIdx].dirPort] = dirOutput[valveLUT[valveIdx].dirPort] | valveLUT[valveIdx].dirPin;
+    valveLUT[valveIdx].stepEndTime        = (uint8_t)positionOffset;
+  }
+
+  // activate stepping output
+  ROM_IntMasterDisable();
+  valveLUT[valveIdx].stepEndTime += currentStepTime;  // TODO: is this sufficient with fast notes?
+  stepToggle[valveLUT[valveIdx].dirPort] = stepToggle[valveLUT[valveIdx].dirPort] | valveLUT[valveIdx].dirPin;
+
+  switch (valveLUT[valveIdx].dirPort) {
+  case DirPortL:  // only change bit 0:5 (protect others with 0xC0)
+    GPIO_PORTL_DATA_R = (GPIO_PORTL_DATA_R & 0xC0) | dirOutput[DirPortL];
+    break;
+    // TODO: add more ports, if they are used
+  }
+  ROM_IntMasterEnable();
+
+  // update position
+  valveLUT[valveIdx].position += positionOffset;
+}
+
+/**
+ * Linear mapping of MIDI velocity to a valve position
+ * TODO: actually implement the mapping function
+ */
+uint8_t velocityToPosition(uint8_t midiVelocity) {
+  // TODO: convert velocity to position value (linear mapping)
+  return midiVelocity;
 }
 
 /*
