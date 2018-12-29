@@ -29,10 +29,14 @@
 #include "inc/tm4c1294ncpdt.h"
 
 /* GLOBAL COONFIGURATION */
-#define TIMER_ONESEC_DIV 20  // timer value = 1 second / TIMER_ONESEC_DIV
+#define TIMER_ONESEC_DIV 1000  // timer value = 1 second / TIMER_ONESEC_DIV
 
 /* GLOBAL VARIABLES */
 uint32_t g_ui32SysClock;  // System clock rate in Hz.
+
+/* VARIABLES AND DATA TYPES FOR MIDI DECODING */
+typedef enum MidiStates { MidiInit = 0, MidiCmd, MidiData1, MidiData2 } midiState_t;
+midiState_t midiState = MidiInit;
 
 /* VARIABLES AND DATA TYPES FOR VALVE POSITION CONTROL */
 
@@ -97,16 +101,17 @@ void Timer0IntHandler(void) {
   // check, which motors should end
   for (int i = 0; i < VALVE_CNT; i++) {
     if (valveLUT[i].stepEndTime == currentStepTime) {
+      printf("%i\n", i);
       stepToggle[valveLUT[i].stepPort] &= ~valveLUT[i].stepPin;
     }
   }
 
   // write stepper motor step output
-  GPIO_PORTE_AHB_DATA_R = GPIO_PORTE_AHB_DATA_R ^ stepToggle[0];
+  GPIO_PORTE_AHB_DATA_R ^= stepToggle[0];
   // TODO: add more ports, if they are used
 
   // debug output: blink LED same as stepper motor 1
-  GPIO_PORTN_DATA_R = GPIO_PORTN_DATA_R ^ stepToggle[valveLUT[0].stepPort];
+  GPIO_PORTN_DATA_R ^= stepToggle[valveLUT[0].stepPort];
 
   // increase step time
   currentStepTime++;
@@ -172,30 +177,55 @@ int main(void) {
     // note: 0 to 127 are C-1 to G9 (piano is A0 to C8, 0x3C is the middle C)
     // velocity: 0x00 silent, 0x45 middle, 0x7F high
 
-    // TODO: use state machine, start if (incoming byte > 0x7F)
+    uint8_t recvByte = ROM_UARTCharGet(UART0_BASE);
 
-    /* get MIDI input */
-    midiCmd  = ROM_UARTCharGet(UART0_BASE);
-    midiNote = ROM_UARTCharGet(UART0_BASE);
-    midiVel  = ROM_UARTCharGet(UART0_BASE);
-    SysCtlDelay(g_ui32SysClock / (1 * 3));  // delay 1us to get newline char, if it was sent
-    if (ROM_UARTCharsAvail(UART0_BASE)) {   // catch additional newline, when sent via bash with echo
-      if (ROM_UARTCharGet(UART0_BASE) != 0x0A) {
-        printf("error receiving\n");
-      }
+    if (recvByte > 0x7F) {
+      midiState = MidiCmd;
     }
-    printf("MIDI: 0x%02X 0x%02X 0x%02X -> ", midiCmd, midiNote, midiVel);
 
-    /* modify output value */
-    if (0x90 == midiCmd) {  // if NoteOn
-      switch (midiNote) {
-      case 0x3C:
-        printf("middle C!\n");
-        updateValve(0, velocityToPosition(midiVel));
-        break;
-      default:
-        printf("other note 0x%02x\n", midiNote);
+    switch (midiState) {
+    case MidiInit:
+      //printf("MidiInit: ignore recv 0x%02X\n", recvByte);
+      break;
+    case MidiCmd:
+      midiCmd   = recvByte;
+      midiState = MidiData1;
+      break;
+    case MidiData1:
+      midiNote  = recvByte;
+      midiState = MidiData2;
+      break;
+    case MidiData2:
+      midiVel   = recvByte;
+      midiState = MidiInit;
+
+      /* now "play" the note */
+      printf("MIDI: %02X %02X %02X > ", midiCmd, midiNote, midiVel);
+
+      /* modify output value */
+      if (0x90 == midiCmd) {  // if NoteOn
+        switch (midiNote) {
+        case 0x3C:
+          printf("C\n");
+          updateValve(0, velocityToPosition(midiVel));
+          break;
+        case 0x3D:
+          printf("C#\n");
+          updateValve(1, velocityToPosition(midiVel));
+          break;
+        case 0x3F:
+          printf("D\n");
+          updateValve(2, velocityToPosition(midiVel));
+          break;
+        case 0x40:
+          printf("D#\n");
+          updateValve(3, velocityToPosition(midiVel));
+          break;
+        default:
+          printf("other\n", midiNote);
+        }
       }
+      break;
     }
   }
 
