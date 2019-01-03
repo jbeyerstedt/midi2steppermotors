@@ -72,11 +72,11 @@ typedef struct Valve {  // holds information about each valve
 // step output: PE0:5 - 1B3, 1B4, 1B5, 1B6, 1A2, 1A6
 // dir output:  PL0:5 - 1C7, 1C8, 1C9, 1C10, 1C5, 1C6
 valve_t valveLUT[VALVE_CNT] = {
-    {StepPortE, GPIO_PIN_0, DirPortL, GPIO_PIN_0, 0, 0},  // note middle C
-    {StepPortE, GPIO_PIN_1, DirPortL, GPIO_PIN_1, 0, 0},  // note TODO
-    {StepPortE, GPIO_PIN_2, DirPortL, GPIO_PIN_2, 0, 0},  // note TODO
-    {StepPortE, GPIO_PIN_3, DirPortL, GPIO_PIN_3, 0, 0},  // note TODO
-    {StepPortE, GPIO_PIN_4, DirPortL, GPIO_PIN_4, 0, 0},  // note TODO
+    {StepPortE, GPIO_PIN_0, DirPortL, GPIO_PIN_0, 0, 0},  // note G4 or g'
+    {StepPortE, GPIO_PIN_1, DirPortL, GPIO_PIN_1, 0, 0},  // note A4 or a'
+    {StepPortE, GPIO_PIN_2, DirPortL, GPIO_PIN_2, 0, 0},  // note H4 or h'
+    {StepPortE, GPIO_PIN_3, DirPortL, GPIO_PIN_3, 0, 0},  // note C5 or c''
+    {StepPortE, GPIO_PIN_4, DirPortL, GPIO_PIN_4, 0, 0},  // note D5 or d''
     {StepPortE, GPIO_PIN_5, DirPortL, GPIO_PIN_5, 0, 0}   // note TODO
 };
 
@@ -101,7 +101,7 @@ void Timer0IntHandler(void) {
   // check, which motors should end
   for (int i = 0; i < VALVE_CNT; i++) {
     if (valveLUT[i].stepEndTime == currentStepTime) {
-      printf("%i\n", i);
+      //printf("off %i\n", i);
       stepToggle[valveLUT[i].stepPort] &= ~valveLUT[i].stepPin;
     }
   }
@@ -205,21 +205,25 @@ int main(void) {
       /* modify output value */
       if (0x90 == midiCmd) {  // if NoteOn
         switch (midiNote) {
-        case 0x3C:
-          printf("C\n");
+        case 0x43:
+          printf("g'\n");
           updateValve(0, velocityToPosition(midiVel));
           break;
-        case 0x3D:
-          printf("C#\n");
+        case 0x45:
+          printf("a'\n");
           updateValve(1, velocityToPosition(midiVel));
           break;
-        case 0x3F:
-          printf("D\n");
+        case 0x47:
+          printf("h'\n");
           updateValve(2, velocityToPosition(midiVel));
           break;
-        case 0x40:
-          printf("D#\n");
+        case 0x48:
+          printf("c''\n");
           updateValve(3, velocityToPosition(midiVel));
+          break;
+        case 0x4A:
+          printf("d''\n");
+          updateValve(4, velocityToPosition(midiVel));
           break;
         default:
           printf("other\n", midiNote);
